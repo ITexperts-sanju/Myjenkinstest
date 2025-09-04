@@ -4,14 +4,14 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/ITexperts-sanju/simple-flask-app.git'
+                git branch: 'main', url: 'https://github.com/ITexperts-sanju/Myjenkinstest.git'
             }
         }
 
         stage('Build Docker Image') {
             steps {
                 script {
-                    docker.build("simple-flask-app:latest")
+                    docker.build("myapp:latest")
                 }
             }
         }
@@ -19,7 +19,7 @@ pipeline {
         stage('Run Docker Container') {
             steps {
                 script {
-                    docker.image("simple-flask-app:latest").run("-p 5000:5000 --name simple-flask-app")
+                    docker.image("myapp:latest").run("-p 5000:5000 --name myapp")
                 }
             }
         }
