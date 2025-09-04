@@ -4,7 +4,8 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/ITexperts-sanju/simple-flask-app.git'
+                git branch: 'main', url: 'https://github.com/ITexperts-sanju/Myjenkinstest
+.git'
             }
         }
 
