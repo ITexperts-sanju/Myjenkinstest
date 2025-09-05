@@ -1,6 +1,12 @@
 pipeline {
     agent any
 
+    environment {
+        IMAGE_NAME     = "flask-app"
+        CONTAINER_NAME = "flask-container"
+        ARTIFACT_DIR   = "C:\\jenkins_artifacts"
+    }
+
     stages {
         stage('Checkout') {
             steps {
@@ -8,26 +14,55 @@ pipeline {
             }
         }
 
+        stage('Clean Old Container') {
+            steps {
+                bat "docker rm -f %CONTAINER_NAME% || exit 0"
+            }
+        }
+
         stage('Build Docker Image') {
             steps {
-                script {
-                    docker.build("myapp:latest")
-                }
+                bat "docker build -t %IMAGE_NAME%:%BUILD_NUMBER% ."
+            }
+        }
+
+        stage('Save Artifact') {
+            steps {
+                bat "mkdir %ARTIFACT_DIR% || exit 0"
+                bat "docker save -o %ARTIFACT_DIR%\\%IMAGE_NAME%-%BUILD_NUMBER%.tar %IMAGE_NAME%:%BUILD_NUMBER%"
             }
         }
 
         stage('Run Docker Container') {
             steps {
-                script {
-                    docker.image("myapp:latest").run("-p 5000:5000 --name myapp")
-                }
+                bat "docker run -d -p 5000:5000 --name %CONTAINER_NAME% %IMAGE_NAME%:%BUILD_NUMBER%"
+            }
+        }
+
+        stage('Test Flask App') {
+            steps {
+                bat "ping -n 5 127.0.0.1 >nul"
+                bat "curl -f http://localhost:5000/health || exit 1"
             }
         }
     }
 
     post {
-        always {
-            echo 'Pipeline finished'
+        success {
+            echo "✅ Flask app deployed successfully!"
+        }
+        failure {
+            echo "❌ Pipeline failed — rolling back..."
+
+            // rollback logic
+            script {
+                bat "for /f %%f in ('dir /b /o-d %ARTIFACT_DIR%\\%IMAGE_NAME%-*.tar') do set LATEST_TAR=%ARTIFACT_DIR%\\%%f && goto :done"
+                bat ":done"
+                bat "docker load -i %LATEST_TAR%"
+                bat "for %%f in (%LATEST_TAR%) do set FILE=%%~nf"
+                bat "for /f \"tokens=2 delims=-\" %%a in (\"%FILE%\") do set IMAGE_TAG=%%a"
+                bat "docker run -d -p 5000:5000 --name %CONTAINER_NAME% %IMAGE_NAME%:%IMAGE_TAG%"
+            }
         }
     }
 }
