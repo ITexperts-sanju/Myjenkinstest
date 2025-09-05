@@ -1,2 +1,4 @@
 # Myjenkinstest
-jemkins 
+jenkins 
+
+Pipelines
