@@ -2,9 +2,9 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME     = "flask-app"
-        CONTAINER_NAME = "flask-container"
-        ARTIFACT_DIR   = "C:\\jenkins_artifacts"
+        IMAGE_NAME = "flask-app"
+        CONTAINER_NAME = "flask-current"
+        ARTIFACT_DIR = "artifacts"
     }
 
     stages {
@@ -14,55 +14,74 @@ pipeline {
             }
         }
 
-        stage('Clean Old Container') {
-            steps {
-                bat "docker rm -f %CONTAINER_NAME% || exit 0"
-            }
-        }
-
         stage('Build Docker Image') {
             steps {
-                bat "docker build -t %IMAGE_NAME%:%BUILD_NUMBER% ."
+                script {
+                    env.BUILD_TAG = new Date().format("yyyyMMddHHmmss")
+                    sh "docker build -t ${IMAGE_NAME}:${BUILD_TAG} ."
+                }
             }
         }
 
         stage('Save Artifact') {
             steps {
-                bat "mkdir %ARTIFACT_DIR% || exit 0"
-                bat "docker save -o %ARTIFACT_DIR%\\%IMAGE_NAME%-%BUILD_NUMBER%.tar %IMAGE_NAME%:%BUILD_NUMBER%"
+                script {
+                    sh "mkdir -p ${ARTIFACT_DIR}"
+                    sh "docker save ${IMAGE_NAME}:${BUILD_TAG} -o ${ARTIFACT_DIR}/${IMAGE_NAME}-${BUILD_TAG}.tar"
+                }
             }
         }
 
-        stage('Run Docker Container') {
+        stage('Archive Artifact to Jenkins') {
             steps {
-                bat "docker run -d -p 5000:5000 --name %CONTAINER_NAME% %IMAGE_NAME%:%BUILD_NUMBER%"
+                archiveArtifacts artifacts: "${ARTIFACT_DIR}/*.tar", fingerprint: true
             }
         }
 
-        stage('Test Flask App') {
+        stage('Deploy New Version') {
             steps {
-                bat "ping -n 5 127.0.0.1 >nul"
-                bat "curl -f http://localhost:5000/health || exit 1"
+                script {
+                    sh "docker rm -f new_${CONTAINER_NAME} || true"
+                    sh "docker run -d -p 5001:5000 --name new_${CONTAINER_NAME} ${IMAGE_NAME}:${BUILD_TAG}"
+                }
+            }
+        }
+
+        stage('Health Check') {
+            steps {
+                script {
+                    sleep 5
+                    sh "curl -f http://localhost:5001/health || exit 1"
+                }
+            }
+        }
+
+        stage('Rollover') {
+            steps {
+                script {
+                    sh "docker rm -f ${CONTAINER_NAME} || true"
+                    sh "docker rename new_${CONTAINER_NAME} ${CONTAINER_NAME}"
+                }
             }
         }
     }
 
     post {
-        success {
-            echo "✅ Flask app deployed successfully!"
-        }
         failure {
-            echo "❌ Pipeline failed — rolling back..."
-
-            // rollback logic
             script {
-                bat "for /f %%f in ('dir /b /o-d %ARTIFACT_DIR%\\%IMAGE_NAME%-*.tar') do set LATEST_TAR=%ARTIFACT_DIR%\\%%f && goto :done"
-                bat ":done"
-                bat "docker load -i %LATEST_TAR%"
-                bat "for %%f in (%LATEST_TAR%) do set FILE=%%~nf"
-                bat "for /f \"tokens=2 delims=-\" %%a in (\"%FILE%\") do set IMAGE_TAG=%%a"
-                bat "docker run -d -p 5000:5000 --name %CONTAINER_NAME% %IMAGE_NAME%:%IMAGE_TAG%"
+                echo "❌ New build failed. Rolling back from last artifact..."
+                sh "docker rm -f ${CONTAINER_NAME} || true"
+
+                sh '''
+                LATEST_TAR=$(ls -t artifacts/${IMAGE_NAME}-*.tar | head -n 1)
+                docker load -i $LATEST_TAR
+                IMAGE_TAG=$(basename $LATEST_TAR .tar | cut -d'-' -f2)
+                docker run -d -p 5000:5000 --name ${CONTAINER_NAME} ${IMAGE_NAME}:$IMAGE_TAG
+                '''
             }
+        }
+        success {
+            echo "✅ New version deployed successfully!"
         }
     }
 }
